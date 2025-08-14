@@ -1,0 +1,146 @@
+name: CI-CD
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build-test-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Backend: install & tests with coverage
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      - name: Backend install
+        working-directory: backend
+        run: npm ci
+
+      - name: Backend tests (coverage)
+        working-directory: backend
+        run: npm run cover
+
+      - name: Save backend coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage
+
+      # Frontend: install & build (assumes npm run build -> dist/)
+      - name: Frontend install
+        working-directory: frontend
+        run: npm ci
+
+      - name: Frontend build
+        working-directory: frontend
+        run: npm run build
+
+      - name: Save frontend build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+
+      # Terraform validation
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+
+      - name: Terraform fmt check
+        working-directory: infra/terraform
+        run: terraform fmt -check -recursive
+
+      - name: Terraform validate
+        working-directory: infra/terraform
+        run: terraform validate
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build-test-validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ secrets.AWS_REGION }}
+
+      # ----- Deploy Frontend (S3 + CloudFront) -----
+      - name: Download frontend build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist
+
+      - name: Sync to S3
+        run: aws s3 sync dist "s3://${{ secrets.FRONTEND_BUCKET }}/" --delete
+
+      - name: Invalidate CloudFront
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}" \
+            --paths "/*"
+
+      # ----- Deploy Backend (send code to EC2 via SSM, restart service) -----
+      - name: Get API Instance ID by Name tag
+        id: ec2
+        run: |
+          IID=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=${{ secrets.API_INSTANCE_TAG_NAME }}" "Name=instance-state-name,Values=running" \
+            --query "Reservations[].Instances[].InstanceId" --output text)
+          if [ -z "$IID" ] || [ "$IID" = "None" ]; then
+            echo "No running instance found"; exit 1
+          fi
+          echo "instance_id=$IID" >> $GITHUB_OUTPUT
+
+      # Push app.js (Express app used by tests)
+      - name: Base64 encode app.js
+        id: b64_app
+        run: echo "data=$(base64 -w0 backend/app.js)" >> $GITHUB_OUTPUT
+
+      # Push server.js wrapper that listens on PORT and uses app.js
+      - name: Prepare server.js content
+        id: b64_srv
+        run: |
+          cat > server_runtime.js <<'JS'
+          const app = require('/opt/app/app.js');
+          const PORT = process.env.PORT || 3000;
+          app.listen(PORT, () => console.log('API running on', PORT));
+          JS
+          echo "data=$(base64 -w0 server_runtime.js)" >> $GITHUB_OUTPUT
+
+      - name: Update files on EC2 via SSM and restart service
+        run: |
+          aws ssm send-command \
+            --instance-ids "${{ steps.ec2.outputs.instance_id }}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters commands="[
+              \"sudo mkdir -p /opt/app\",
+              \"echo '${{ steps.b64_app.outputs.data }}' | base64 -d | sudo tee /opt/app/app.js > /dev/null\",
+              \"echo '${{ steps.b64_srv.outputs.data }}' | base64 -d | sudo tee /opt/app/server.js > /dev/null\",
+              \"sudo systemctl restart node-api.service\",
+              \"sleep 2\",
+              \"sudo systemctl status --no-pager node-api.service || true\"
+            ]" \
+            --output text
