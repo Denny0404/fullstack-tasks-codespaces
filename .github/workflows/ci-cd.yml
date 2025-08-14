@@ -2,15 +2,10 @@ name: CI-CD
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, "feature/**", "fix/**" ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
-
-permissions:
-  contents: read
-  id-token: write
-
 jobs:
   build-test-validate:
     runs-on: ubuntu-latest
