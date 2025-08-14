@@ -240,3 +240,5 @@ export default function App() {
     </div>
   );
 }
+
+// ui: minor polish note
