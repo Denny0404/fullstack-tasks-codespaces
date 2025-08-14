@@ -66,3 +66,8 @@ app.delete('/api/tasks/:id', (req, res) => {
 });
 
 app.listen(PORT, () => console.log(`API running → http://localhost:${PORT}`));
+
+// Tiny version endpoint (safe to add)
+app.get('/api/version', (_req, res) => {
+  res.json({ version: '1.0.0', service: 'tasks-api' });
+});
