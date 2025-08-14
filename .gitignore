@@ -8,3 +8,16 @@ dist
 # SQLite artifacts
 backend/tasks.db-wal
 backend/tasks.db-shm
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+.terraform.lock.hcl
+terraform.tfvars
+*.auto.tfvars
+*_override.tf
+*_override.tf.json
+override.tf
+override.tf.json
