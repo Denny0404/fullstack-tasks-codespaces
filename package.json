@@ -1,0 +1,12 @@
+{
+  "name": "fullstack-codespaces",
+  "private": true,
+  "scripts": {
+    "postinstall": "npm --prefix backend install && npm --prefix frontend install",
+    "dev": "concurrently -k -n API,WEB -c auto \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\"",
+    "start": "npm --prefix backend start"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
