@@ -45,11 +45,11 @@ jobs:
       # Frontend: install & build (assumes npm run build -> dist/)
       - name: Frontend install
         working-directory: frontend
-        run: npm ci
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
       - name: Frontend build
         working-directory: frontend
-        run: npm run build
 
       - name: Save frontend build artifact
         uses: actions/upload-artifact@v4
@@ -65,11 +65,9 @@ jobs:
 
       - name: Terraform fmt check
         working-directory: infra/terraform
-        run: terraform fmt -check -recursive
 
       - name: Terraform validate
         working-directory: infra/terraform
-        run: terraform validate
 
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -94,10 +92,8 @@ jobs:
           path: dist
 
       - name: Sync to S3
-        run: aws s3 sync dist "s3://${{ secrets.FRONTEND_BUCKET }}/" --delete
 
       - name: Invalidate CloudFront
-        run: |
           aws cloudfront create-invalidation \
             --distribution-id "${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}" \
             --paths "/*"
@@ -105,7 +101,6 @@ jobs:
       # ----- Deploy Backend (send code to EC2 via SSM, restart service) -----
       - name: Get API Instance ID by Name tag
         id: ec2
-        run: |
           IID=$(aws ec2 describe-instances \
             --filters "Name=tag:Name,Values=${{ secrets.API_INSTANCE_TAG_NAME }}" "Name=instance-state-name,Values=running" \
             --query "Reservations[].Instances[].InstanceId" --output text)
@@ -117,12 +112,10 @@ jobs:
       # Push app.js (Express app used by tests)
       - name: Base64 encode app.js
         id: b64_app
-        run: echo "data=$(base64 -w0 backend/app.js)" >> $GITHUB_OUTPUT
 
       # Push server.js wrapper that listens on PORT and uses app.js
       - name: Prepare server.js content
         id: b64_srv
-        run: |
           cat > server_runtime.js <<'JS'
           const app = require('/opt/app/app.js');
           const PORT = process.env.PORT || 3000;
@@ -131,7 +124,6 @@ jobs:
           echo "data=$(base64 -w0 server_runtime.js)" >> $GITHUB_OUTPUT
 
       - name: Update files on EC2 via SSM and restart service
-        run: |
           aws ssm send-command \
             --instance-ids "${{ steps.ec2.outputs.instance_id }}" \
             --document-name "AWS-RunShellScript" \

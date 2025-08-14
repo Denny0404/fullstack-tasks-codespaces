@@ -5,7 +5,9 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "test": "jest --runInBand",
+    "cover": "jest --coverage --runInBand"
   },
   "dependencies": {
     "better-sqlite3": "^9.4.0",
@@ -14,6 +16,8 @@
     "morgan": "^1.10.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.0"
+    "jest": "^30.0.5",
+    "nodemon": "^3.1.0",
+    "supertest": "^7.1.4"
   }
 }
